@@ -76,8 +76,11 @@ st.title("🚀 Procesador de Inspecciones - Oracle a Excel")
 
 archivo = st.file_uploader("Sube tu archivo .csv exportado de Oracle", type=["csv"])
 
+# --- REEMPLAZA LA LÍNEA df = pd.read_csv(archivo) POR ESTE BLOQUE ---
+
 if archivo:
-try:
+    # Intentamos leer el archivo con diferentes codificaciones
+    try:
         # Primero intentamos con el estándar moderno
         df = pd.read_csv(archivo, sep=None, engine='python', encoding='utf-8')
     except UnicodeDecodeError:
@@ -93,7 +96,6 @@ try:
     # El resto del código sigue igual...
     col_json = st.selectbox("Selecciona la columna que tiene las actas (JSON)", df.columns)
     # ...
-
     if st.button("Procesar Datos"):
         resultados = []
         for index, row in df.iterrows():
