@@ -77,11 +77,22 @@ st.title("🚀 Procesador de Inspecciones - Oracle a Excel")
 archivo = st.file_uploader("Sube tu archivo .csv exportado de Oracle", type=["csv"])
 
 if archivo:
-    df = pd.read_csv(archivo)
-    # Suponiendo que la columna con el JSON se llama 'ACTAS' y el ID 'id_visita'
-    # Ajustar nombres de columnas según tu CSV real
+try:
+        # Primero intentamos con el estándar moderno
+        df = pd.read_csv(archivo, sep=None, engine='python', encoding='utf-8')
+    except UnicodeDecodeError:
+        # Si falla, probamos con el estándar de Excel/Windows en español
+        archivo.seek(0) # Volvemos al inicio del archivo para reintentar
+        df = pd.read_csv(archivo, sep=None, engine='python', encoding='latin-1')
+
+    # El parámetro sep=None + engine='python' hace que Pandas detecte 
+    # solo si usas coma o punto y coma.
+    
+    st.success("¡Archivo cargado con éxito!")
+    
+    # El resto del código sigue igual...
     col_json = st.selectbox("Selecciona la columna que tiene las actas (JSON)", df.columns)
-    col_id = st.selectbox("Selecciona la columna de ID Visita", df.columns)
+    # ...
 
     if st.button("Procesar Datos"):
         resultados = []
