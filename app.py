@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import json
-import re
 
-def limpiar_json(texto):
-    # Elimina las comillas dobles repetidas que vienen del CSV de Oracle
-    if pd.isna(texto) or texto == "": return []
-    texto_limpio = texto.replace('""', '"')
+# --- FUNCIONES DE LÓGICA ---
+
+def limpiar_y_cargar_json(texto):
+    if pd.isna(texto) or str(texto).strip() == "" or str(texto).strip() == "[]":
+        return []
+    # Limpiamos las dobles comillas que vienen de Oracle
+    texto_limpio = str(texto).replace('""', '"')
     try:
         return json.loads(texto_limpio)
     except:
@@ -14,7 +16,7 @@ def limpiar_json(texto):
 
 def procesar_inspeccion(actas_list):
     if actas_list == "ERROR_FORMATO":
-        return {"modalidad": "ERROR JSON", "validaciones": ["Cadena corrupta"]}
+        return {"modalidad_final": "ERROR JSON", "validaciones": ["Cadena corrupta"], "total": 0}
     
     res = {
         "total": len(actas_list),
@@ -25,39 +27,39 @@ def procesar_inspeccion(actas_list):
     }
 
     for i, acta in enumerate(actas_list):
-        tipo = acta.get("gochu_tipo_acta", "")
+        tipo = acta.get("gochu_tipo_acta", "S/D")
         nro = str(acta.get("gochu_nro_acta", ""))
         largo = len(nro)
         
-        # Conteo y Clasificación de Modalidad
         modalidad_acta = "DESCONOCIDO"
-        validacion_acta = "OK"
+        val = "OK"
 
         if tipo == "ZGA1":
             res["ZGA1"] += 1
             if nro.startswith("400") and largo == 9: modalidad_acta = "PAPEL"
             elif not nro.startswith("400") and largo == 9: modalidad_acta = "DIGITAL"
-            else: validacion_acta = "REVISAR LONGITUD"
+            else: val = f"ZGA1-{largo} dígitos (Raro)"
             
         elif tipo == "ZGA2":
             res["ZGA2"] += 1
             if largo == 6: modalidad_acta = "PAPEL"
             elif largo == 9: modalidad_acta = "DIGITAL"
-            else: validacion_acta = "REVISAR LONGITUD"
+            else: val = f"ZGA2-{largo} dígitos (Raro)"
             
         elif tipo == "ZGA3":
             res["ZGA3"] += 1
             modalidad_acta = "PAPEL"
-            if largo != 3: validacion_acta = "REVISAR LONGITUD"
+            if largo != 3: val = f"ZGA3-{largo} dígitos (Raro)"
 
         elif tipo == "ZGA4":
             res["ZGA4"] += 1
             modalidad_acta = "PAPEL"
-            if largo != 5: validacion_acta = "REVISAR LONGITUD"
+            if largo != 5: val = f"ZGA4-{largo} dígitos (Raro)"
 
         res["signals"].add(modalidad_acta)
         res["data_actas"].append((tipo, nro))
-        res["validaciones"].append(f"Acta {i+1}: {validacion_acta}")
+        if val != "OK":
+            res["validaciones"].append(val)
 
     # Lógica de Modalidad General
     if "PAPEL" in res["signals"] and "DIGITAL" in res["signals"]:
@@ -71,48 +73,57 @@ def procesar_inspeccion(actas_list):
 
     return res
 
-# --- INTERFAZ DE STREAMLIT ---
-st.title("🚀 Procesador de Inspecciones - Oracle a Excel")
+# --- INTERFAZ DE USUARIO ---
 
-archivo = st.file_uploader("Sube tu archivo .csv exportado de Oracle", type=["csv"])
+st.set_page_config(page_title="Procesador de Inspecciones", layout="wide")
+st.title("📋 Procesador de Reportes de Inspección")
+st.markdown("Sube el CSV de Oracle para limpiar las actas y determinar la modalidad automáticamente.")
 
-# --- REEMPLAZA LA LÍNEA df = pd.read_csv(archivo) POR ESTE BLOQUE ---
+archivo = st.file_uploader("Subir archivo CSV", type=["csv"])
 
 if archivo:
-    # Intentamos leer el archivo con diferentes codificaciones
+    # 1. Lectura robusta del archivo
     try:
-        # Primero intentamos con el estándar moderno
+        # Intentamos con UTF-8 primero
         df = pd.read_csv(archivo, sep=None, engine='python', encoding='utf-8')
     except UnicodeDecodeError:
-        # Si falla, probamos con el estándar de Excel/Windows en español
-        archivo.seek(0) # Volvemos al inicio del archivo para reintentar
+        # Si falla, vamos con Latin-1 (común en Oracle/Windows)
+        archivo.seek(0)
         df = pd.read_csv(archivo, sep=None, engine='python', encoding='latin-1')
 
-    # El parámetro sep=None + engine='python' hace que Pandas detecte 
-    # solo si usas coma o punto y coma.
+    st.success(f"Archivo cargado: {len(df)} filas encontradas.")
     
-    st.success("¡Archivo cargado con éxito!")
-    
-    # El resto del código sigue igual...
-    col_json = st.selectbox("Selecciona la columna que tiene las actas (JSON)", df.columns)
-    # ...
-    if st.button("Procesar Datos"):
+    # 2. Selección de columnas
+    col1, col2 = st.columns(2)
+    with col1:
+        col_id = st.selectbox("Columna de ID (Visita/Inspección):", df.columns)
+    with col2:
+        col_json = st.selectbox("Columna con las Actas (JSON):", df.columns)
+
+    # 3. Procesamiento
+    if st.button("🚀 Procesar Reporte"):
         resultados = []
+        
+        progress_bar = st.progress(0)
         for index, row in df.iterrows():
-            datos_actas = limpiar_json(row[col_json])
-            info = procesar_inspeccion(datos_actas)
+            # Actualizar barra de progreso cada 100 filas
+            if index % 100 == 0:
+                progress_bar.progress(index / len(df))
             
-            # Construir fila para el Excel
+            lista_actas = limpiar_y_cargar_json(row[col_json])
+            info = procesar_inspeccion(lista_actas)
+            
+            # Construir fila
             fila = {
                 "id_visita": row[col_id],
-                "total_actas": info.get("total", 0),
-                "cant_ZGA3_circunstanciada": info.get("ZGA3", 0),
-                "cant_ZGA1_comprobacion": info.get("ZGA1", 0),
-                "cant_ZGA2_intimacion": info.get("ZGA2", 0),
-                "cant_ZGA4_secuestro": info.get("ZGA4", 0),
+                "total_actas": info["total"],
+                "cant_circunstanciadas": info.get("ZGA3", 0),
+                "cant_comprobacion": info.get("ZGA1", 0),
+                "cant_intimacion": info.get("ZGA2", 0),
+                "cant_secuestro": info.get("ZGA4", 0),
             }
             
-            # Columnas Dinámicas (hasta 4 actas)
+            # Columnas de Actas (Max 4)
             actas_extraidas = info.get("data_actas", [])
             for i in range(1, 5):
                 if i <= len(actas_extraidas):
@@ -122,17 +133,21 @@ if archivo:
                     fila[f"tipo_acta_{i}"] = ""
                     fila[f"numero_acta_{i}"] = ""
             
-            fila["MODALIDAD"] = info.get("modalidad_final")
-            fila["VALIDACIONES"] = " | ".join(info.get("validaciones", []))
+            fila["MODALIDAD"] = info["modalidad_final"]
+            fila["ALERTAS_LONGITUD"] = " | ".join(info["validaciones"])
             resultados.append(fila)
 
+        progress_bar.progress(100)
         df_final = pd.DataFrame(resultados)
-        st.dataframe(df_final.head())
         
-        # Botón de Descarga
-        @st.cache_data
-        def convert_df(df):
-            return df.to_csv(index=False).encode('utf-8-sig')
+        st.subheader("Vista Previa del Resultado")
+        st.dataframe(df_final.head(10))
 
-        csv_download = convert_df(df_final)
-        st.download_button("📥 Descargar Reporte en CSV (Abrir en Excel)", data=csv_download, file_name="reporte_procesado.csv")
+        # 4. Descarga
+        csv_data = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(
+            label="📥 Descargar Reporte para Excel",
+            data=csv_data,
+            file_name="reporte_inspecciones_limpio.csv",
+            mime="text/csv"
+        )
