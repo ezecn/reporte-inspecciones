@@ -72,22 +72,34 @@ def procesar_inspeccion(actas_list):
     return res
 
 def transformar_a_fila_por_acta(df_procesado):
+    # Diccionario de traducción de códigos a nombres
+    mapping_nombres = {
+        "ZGA1": "Comprobación",
+        "ZGA2": "Intimación",
+        "ZGA3": "Circunstanciada",
+        "ZGA4": "Secuestro"
+    }
+    
     filas_individuales = []
     for _, row in df_procesado.iterrows():
         for i in range(1, 5):
             t_col = f'tipo_acta_{i}'
             n_col = f'numero_acta_{i}'
+            
             if t_col in df_procesado.columns and pd.notna(row[t_col]) and str(row[t_col]).strip() != "":
-                # Creamos el diccionario con el orden solicitado
+                codigo_original = str(row[t_col]).strip()
+                # Traducimos el código. Si no está en el mapa, dejamos el original.
+                nombre_acta = mapping_nombres.get(codigo_original, codigo_original)
+                
                 filas_individuales.append({
                     'numero_acta': row[n_col],
-                    'tipo_acta': row[t_col],
+                    'tipo_acta': nombre_acta,
                     'MODALIDAD': row.get('MODALIDAD', 'S/D'),
                     'id_visita': row.get('id_visita', 'S/D')
                 })
     
     nuevo_df = pd.DataFrame(filas_individuales)
-    # Forzamos el orden de las columnas por seguridad
+    # Orden de columnas solicitado
     columnas_ordenadas = ['numero_acta', 'tipo_acta', 'MODALIDAD', 'id_visita']
     return nuevo_df[columnas_ordenadas] if not nuevo_df.empty else nuevo_df
 
@@ -148,23 +160,22 @@ with tab2:
     archivo_corregido = st.file_uploader("Subir archivo corregido", type=["csv"], key="uploader_corregido")
 
     if archivo_corregido:
-        # Detectar separador automáticamente (si es coma o punto y coma)
         try:
             df_corregido = pd.read_csv(archivo_corregido, sep=None, engine='python', encoding='utf-8')
         except UnicodeDecodeError:
             archivo_corregido.seek(0)
             df_corregido = pd.read_csv(archivo_corregido, sep=None, engine='python', encoding='latin-1')
 
-        st.warning("Verifica que las columnas 'tipo_acta_1', 'numero_acta_1', 'MODALIDAD' e 'id_visita' existan.")
+        st.warning("Verifica que las columnas originales de actas (tipo_acta_1, etc.) no hayan sido renombradas.")
         
         if st.button("📊 Generar Informe Final", key="btn_informe"):
             df_final = transformar_a_fila_por_acta(df_corregido)
             
             if not df_final.empty:
-                st.write(f"Se generaron {len(df_final)} filas individuales.")
+                st.write(f"Se generaron {len(df_final)} filas con nombres de actas descriptivos.")
                 st.dataframe(df_final.head(10))
                 
                 csv_final = df_final.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                 st.download_button("📥 Descargar Informe Detallado (Final)", csv_final, "informe_actas_final.csv", "text/csv")
             else:
-                st.error("No se encontraron actas para procesar en el archivo subido.")
+                st.error("No se encontraron actas para procesar.")
